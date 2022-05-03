@@ -1,8 +1,9 @@
 #include <Arduino.h>
-#include <Ticker.h>
-#include <TM1620.h>
-#include <ArduinoNvs.h>
-#include <AccelStepper.h>
+#include "Ticker.h"
+#include "TM1620.h"
+#include "EasyBuzzer.h"
+#include "ArduinoNvs.h"
+#include "AccelStepper.h"
 #include "BluetoothSerial.h"
 #include "SerialHelper.h"
 
@@ -13,17 +14,26 @@
 #define RANGE  450.0  // max rotation degree
 
 enum SerialCmd {
-    Right = 'R',
-    Left = 'L',
+    CW = 'R',
+    CCW = 'L',
     Stop = 'S',
     Current = 'C',
     Goto = 'M',
     Position = 'P'
 };
 
+BluetoothSerial __SerialBT;
+SerialHelper SerialUsb(&Serial, BUFFER);
+SerialHelper SerialBT(&__SerialBT, BUFFER);
+
+Ticker tickerLed, tickerMotor, tickerSave;
+
 TM1620 led(4, 16, 17, 4);
 
-AccelStepper motor(AccelStepper::DRIVER, 19, 18);
+AccelStepper motor(AccelStepper::DRIVER, 5, 18);
+
+bool motorNeedDisable = false;
+bool motorHasDisabled = false;
 
 long getTicks(double angle) {
     return (long) (angle / 360 * DIVIDE * RATIO);
@@ -58,22 +68,78 @@ double getClosestAngle(double angle) {
     return abs(angle - current) < abs(opposite - current) ? angle : opposite;
 }
 
-BluetoothSerial __SerialBT;
-SerialHelper SerialUsb(&Serial, BUFFER);
-SerialHelper SerialBT(&__SerialBT, BUFFER);
+
+void loadPosition(){
+    long ticks = (long)NVS.getInt("POSITION");
+    double angle = getAngle(ticks);
+    if (angle < 0 || angle > RANGE){
+        led.setDisplayToString("ERRP");
+
+        return;
+    }
+    motor.setCurrentPosition(ticks);
+}
+
+void savePosition(){
+    NVS.setInt("POSITION", (int64_t)motor.currentPosition());
+}
+
+void savePositionOnRun(){
+    EasyBuzzer.singleBeep(800, 100);
+    savePosition();
+    if (motor.isRunning()){
+        tickerSave.once(1, savePositionOnRun);
+    }
+}
+
+void gotoAbsoluteAngle(double angle){
+    if (motorHasDisabled){
+        motor.enableOutputs();
+        motorHasDisabled = false;
+    }
+    motorNeedDisable = false;
+    motor.moveTo(getTicks(angle));
+    savePositionOnRun();
+}
+
+void gotoAngle(double angle){
+    gotoAbsoluteAngle(getClosestAngle(angle));
+}
+
+void autoDisableMotor(){
+    if (motor.isRunning()){
+        motorNeedDisable = false;
+        return;
+    }
+    if (motorNeedDisable && !motorHasDisabled){
+        motor.disableOutputs();
+        motorHasDisabled = true;
+        return;
+    }
+    motorNeedDisable = true;
+}
+
+
+void displayPosition(){
+    led.setDisplayToDecNumber((int)getCurrentAngle());
+}
 
 void setup() {
     Serial.begin(9600);
     __SerialBT.begin("BY6DX Rotator");
-
-    motor.setEnablePin(5);
+    NVS.begin();
+    motor.setEnablePin(19);
+    motor.setPinsInverted(true);
     motor.setMinPulseWidth(5);
     motor.setMaxSpeed(DIVIDE * RATIO * SPEED / 60);
     motor.setAcceleration(DIVIDE * RATIO / 300);
-    NVS.begin();
-    ledcSetup(15, 800, 2);
-    ledcAttachPin(23, 15);
-    ledcWrite(15, 2);
+    loadPosition();
+    EasyBuzzer.setPin(13);
+    EasyBuzzer.setOnDuration(100);
+    EasyBuzzer.setOffDuration(100);
+    EasyBuzzer.setPauseDuration(800);
+    tickerLed.attach(1, displayPosition);
+    tickerMotor.attach(10, autoDisableMotor);
 }
 
 void serialDecode(SerialHelper serial) {
@@ -82,24 +148,23 @@ void serialDecode(SerialHelper serial) {
     switch (serial.Buffer[0]) {
         case Current: {
             serial.Device->printf("+0%03d\r\n", (int) getCurrentAngle());
-            led.setDisplayToString("6DX");
             break;
         }
         case Goto: {
             long position = strtol(serial.Buffer + 1, &ptr, 10);
-            motor.moveTo(getTicks(getClosestAngle(position)));
+            gotoAngle(position);
             break;
         }
         case Stop: {
             motor.stop();
             break;
         }
-        case Right: {
-            motor.moveTo(getTicks(RANGE));
+        case CW: {
+            gotoAbsoluteAngle(RANGE);
             break;
         }
-        case Left: {
-            motor.moveTo(0);
+        case CCW: {
+            gotoAbsoluteAngle(0);
             break;
         }
         case Position: {
@@ -124,4 +189,5 @@ void loop() {
     if (SerialUsb.Read())
         serialDecode(SerialUsb);
     motor.run();
+    EasyBuzzer.update();
 }
