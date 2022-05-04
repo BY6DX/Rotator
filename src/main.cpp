@@ -85,7 +85,7 @@ void savePosition(){
 }
 
 void savePositionOnRun(){
-    EasyBuzzer.singleBeep(800, 100);
+    EasyBuzzer.singleBeep(440, 100);
     savePosition();
     if (motor.isRunning()){
         tickerSave.once(1, savePositionOnRun);
@@ -135,11 +135,9 @@ void setup() {
     motor.setAcceleration(DIVIDE * RATIO / 300);
     loadPosition();
     EasyBuzzer.setPin(13);
-    EasyBuzzer.setOnDuration(100);
-    EasyBuzzer.setOffDuration(100);
-    EasyBuzzer.setPauseDuration(800);
     tickerLed.attach(1, displayPosition);
     tickerMotor.attach(10, autoDisableMotor);
+    pinMode(12, INPUT_PULLUP);
 }
 
 void serialDecode(SerialHelper serial) {
@@ -175,6 +173,8 @@ void serialDecode(SerialHelper serial) {
             if (motor.isRunning())
                 serial.Device->println("STOP FIRST");
             motor.setCurrentPosition(getTicks(position));
+            savePosition();
+            break;
         }
         default: {
             serial.Device->println(serial.Buffer);
