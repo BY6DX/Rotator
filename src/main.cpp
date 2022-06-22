@@ -32,9 +32,6 @@ TM1620 led(4, 16, 17, 4);
 
 AccelStepper motor(AccelStepper::DRIVER, 5, 18);
 
-bool motorNeedDisable = false;
-bool motorHasDisabled = false;
-
 long getTicks(double angle) {
     return (long) (angle / 360 * DIVIDE * RATIO);
 }
@@ -90,14 +87,14 @@ void savePositionOnRun(){
     if (motor.isRunning()){
         tickerSave.once(1, savePositionOnRun);
     }
+    else
+    {
+        motor.disableOutputs();
+    }
 }
 
 void gotoAbsoluteAngle(double angle){
-    if (motorHasDisabled){
-        motor.enableOutputs();
-        motorHasDisabled = false;
-    }
-    motorNeedDisable = false;
+    motor.enableOutputs();
     motor.moveTo(getTicks(angle));
     savePositionOnRun();
 }
@@ -105,20 +102,6 @@ void gotoAbsoluteAngle(double angle){
 void gotoAngle(double angle){
     gotoAbsoluteAngle(getClosestAngle(angle));
 }
-
-void autoDisableMotor(){
-    if (motor.isRunning()){
-        motorNeedDisable = false;
-        return;
-    }
-    if (motorNeedDisable && !motorHasDisabled){
-        motor.disableOutputs();
-        motorHasDisabled = true;
-        return;
-    }
-    motorNeedDisable = true;
-}
-
 
 void displayPosition(){
     led.setDisplayToDecNumber((int)getCurrentAngle());
@@ -129,14 +112,13 @@ void setup() {
     __SerialBT.begin("BY6DX Rotator");
     NVS.begin();
     motor.setEnablePin(19);
-    motor.setPinsInverted(true);
+    motor.setPinsInverted(false, false, true);
     motor.setMinPulseWidth(5);
     motor.setMaxSpeed(DIVIDE * RATIO * SPEED / 60);
-    motor.setAcceleration(DIVIDE * RATIO / 300);
+    motor.setAcceleration(DIVIDE * RATIO / 100);
     loadPosition();
     EasyBuzzer.setPin(13);
     tickerLed.attach(1, displayPosition);
-    tickerMotor.attach(10, autoDisableMotor);
     pinMode(12, INPUT_PULLUP);
 }
 
